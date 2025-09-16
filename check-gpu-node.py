@@ -30,6 +30,7 @@ import time
 from typing import Dict, List, Tuple, Optional
 
 import requests
+from requests.exceptions import ConnectionError, Timeout, RequestException
 from kubernetes import client, config
 from kubernetes.client import V1Node, V1NodeCondition
 from dotenv import load_dotenv
@@ -43,14 +44,17 @@ GPU_RESOURCE_KEYS = [
 ]
 
 
-def send_slack_message(webhook_url: str, message: str, username: str = "GPU Checker") -> bool:
+def send_slack_message(webhook_url: str, message: str, username: str = "k8s-gpu-checker", 
+                      max_retries: int = 3, retry_delay: int = 30) -> bool:
     """
-    슬랙 웹훅을 통해 메시지를 전송합니다.
+    슬랙 웹훅을 통해 메시지를 전송합니다. 네트워크 오류시 재시도합니다.
     
     Args:
         webhook_url: 슬랙 웹훅 URL
         message: 전송할 메시지
         username: 봇 사용자명
+        max_retries: 최대 재시도 횟수 (기본: 3)
+        retry_delay: 재시도 간격(초) (기본: 30)
     
     Returns:
         bool: 전송 성공 여부
@@ -64,17 +68,47 @@ def send_slack_message(webhook_url: str, message: str, username: str = "GPU Chec
         "icon_emoji": ":robot_face:"
     }
     
-    try:
-        response = requests.post(
-            webhook_url, 
-            json=payload,
-            timeout=10,
-            headers={"Content-Type": "application/json"}
-        )
-        return response.status_code == 200
-    except Exception as e:
-        print(f"슬랙 메시지 전송 실패: {e}", file=sys.stderr)
-        return False
+    for attempt in range(max_retries + 1):  # 0, 1, 2, 3 (총 4번 시도)
+        try:
+            response = requests.post(
+                webhook_url, 
+                json=payload,
+                timeout=10,
+                headers={"Content-Type": "application/json"}
+            )
+            if response.status_code == 200:
+                if attempt > 0:
+                    print(f"✅ 슬랙 메시지를 {attempt + 1}번째 시도에서 성공적으로 전송했습니다.", file=sys.stderr)
+                return True
+            else:
+                print(f"슬랙 메시지 전송 실패 (HTTP {response.status_code}): {response.text}", file=sys.stderr)
+                
+        except (ConnectionError, Timeout) as e:
+            # 네트워크 연결 오류나 타임아웃의 경우 재시도
+            if "Connection reset by peer" in str(e) or "Connection aborted" in str(e):
+                if attempt < max_retries:
+                    print(f"슬랙 메시지 전송 실패 ({attempt + 1}/{max_retries + 1}회 시도): {e}", file=sys.stderr)
+                    print(f"⏳ {retry_delay}초 후 재시도합니다...", file=sys.stderr)
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    print(f"슬랙 메시지 전송 최종 실패: {e}", file=sys.stderr)
+                    return False
+            else:
+                print(f"슬랙 메시지 전송 실패: {e}", file=sys.stderr)
+                return False
+                
+        except RequestException as e:
+            # 기타 requests 관련 예외
+            print(f"슬랙 메시지 전송 실패: {e}", file=sys.stderr)
+            return False
+            
+        except Exception as e:
+            # 기타 예외
+            print(f"슬랙 메시지 전송 실패: {e}", file=sys.stderr)
+            return False
+    
+    return False
 
 
 def format_slack_message(gpu_nodes: List[Dict], ready_gpu_nodes: List[Dict]) -> str:
@@ -224,7 +258,13 @@ def one_shot(args: argparse.Namespace) -> int:
         webhook_url = get_slack_webhook_url(args)
         if webhook_url:
             slack_message = format_slack_message(gpu_nodes, ready_gpu_nodes)
-            success = send_slack_message(webhook_url, slack_message, args.slack_username)
+            success = send_slack_message(
+                webhook_url, 
+                slack_message, 
+                args.slack_username,
+                max_retries=args.slack_retry_count,
+                retry_delay=args.slack_retry_delay
+            )
             if success and not args.json:
                 print("✅ 슬랙 메시지를 성공적으로 전송했습니다.")
             elif not success and not args.json:
@@ -265,6 +305,8 @@ def parse_args() -> argparse.Namespace:
     slack_group.add_argument("--slack-webhook", help="슬랙 웹훅 URL (환경변수 SLACK_WEBHOOK_URL로도 설정 가능)")
     slack_group.add_argument("--slack-username", default="k8s-gpu-checker", help="슬랙 봇 사용자명 (기본: k8s-gpu-checker)")
     slack_group.add_argument("--slack-only-on-error", action="store_true", help="GPU 노드가 없거나 Ready 상태가 아닐 때만 슬랙 메시지 전송")
+    slack_group.add_argument("--slack-retry-count", type=int, default=3, help="슬랙 메시지 전송 실패시 최대 재시도 횟수 (기본: 3)")
+    slack_group.add_argument("--slack-retry-delay", type=int, default=30, help="슬랙 메시지 재시도 간격(초) (기본: 30)")
 
     return p.parse_args()
 

@@ -47,6 +47,9 @@ uv run python check-gpu-node.py --slack-webhook YOUR_URL --slack-only-on-error
 
 # 슬랙 봇 사용자명 커스터마이징
 uv run python check-gpu-node.py --slack-webhook YOUR_URL --slack-username "GPU-Monitor"
+
+# 네트워크 오류시 재시도 설정 (5번 재시도, 60초 간격)
+uv run python check-gpu-node.py --slack-webhook YOUR_URL --slack-retry-count 5 --slack-retry-delay 60
 ```
 
 ### JSON 출력
@@ -72,6 +75,8 @@ uv run python check-gpu-node.py --json
 | `--slack-webhook URL` | 슬랙 웹훅 URL (환경변수 `SLACK_WEBHOOK_URL`로도 설정 가능) |
 | `--slack-username NAME` | 슬랙 봇 사용자명 (기본: k8s-gpu-checker) |
 | `--slack-only-on-error` | GPU 노드가 없거나 Ready 상태가 아닐 때만 슬랙 메시지 전송 |
+| `--slack-retry-count N` | 슬랙 메시지 전송 실패시 최대 재시도 횟수 (기본: 3) |
+| `--slack-retry-delay N` | 슬랙 메시지 재시도 간격(초) (기본: 30) |
 
 ## 🔧 환경변수
 
