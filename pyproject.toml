@@ -1,0 +1,11 @@
+[project]
+name = "k8s-gpu-node-checker"
+version = "0.1.0"
+description = "k8s에서 현재 GPU Node가 사용가능한지 체크합니다. "
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "kubernetes>=33.1.0",
+    "python-dotenv>=1.1.1",
+    "requests>=2.31.0",
+]
